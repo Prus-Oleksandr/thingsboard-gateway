@@ -85,7 +85,7 @@ setup(
         'cachetools',
         'tb-paho-mqtt-client>=2.1.2',
         'tb-mqtt-client==1.13.13',
-        'packaging==23.1',
+        'packaging',
         'service-identity',
         'psutil',
         'PySocks',
