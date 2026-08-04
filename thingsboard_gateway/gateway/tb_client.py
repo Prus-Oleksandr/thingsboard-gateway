@@ -269,8 +269,7 @@ class TBClient(threading.Thread):
             self._check_cert_thread.start()
 
         if self.__port == 8883 or self.__tls:
-            cert_required = CERT_REQUIRED if (self.__ca_cert and
-                                              self.__cert) else ssl.CERT_OPTIONAL if self.__cert else ssl.CERT_NONE
+            cert_required = CERT_REQUIRED if self.__ca_cert else ssl.CERT_OPTIONAL if self.__cert else ssl.CERT_NONE
 
             self.client._client.tls_set(ca_certs=self.__ca_cert,
                                         certfile=self.__cert,
