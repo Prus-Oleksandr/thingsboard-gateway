@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 #     Copyright 2026. ThingsBoard
 #
 #     Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,7 +61,8 @@ setup(
               'thingsboard_gateway.connectors.ftp', 'thingsboard_gateway.extensions.ftp',
               'thingsboard_gateway.connectors.knx', 'thingsboard_gateway.extensions.knx',
               'thingsboard_gateway.connectors.knx.entities',
-              'thingsboard_gateway.connectors.s7', 'thingsboard_gateway.extensions.s7',
+              'thingsboard_gateway.connectors.s7', 'thingsboard_gateway.connectors.s7.entities',
+              'thingsboard_gateway.extensions.s7',
               'thingsboard_gateway.tb_utility', 'thingsboard_gateway.extensions',
               'thingsboard_gateway.extensions.serial'
               ],
