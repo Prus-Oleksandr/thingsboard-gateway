@@ -44,6 +44,8 @@ class DeviceConfig(ABC):
         self.attributes = config['attributes']
         self.timeseries = config['timeseries']
         self.datapoints = config['datapoints']
+        self.server_side_rpc = config.get('serverSideRpc', [])
+        self.attributes_updates = config.get('attributeUpdates', [])
 
     def _format_base_config(self, config: dict) -> None:
         """

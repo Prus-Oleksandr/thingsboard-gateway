@@ -12,10 +12,6 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from thingsboard_gateway.connectors.s7.entities.device import Device
-from thingsboard_gateway.connectors.s7.entities.device_configs import (
-    DeviceConfigValidationError,
-)
 from time import monotonic, sleep
 import asyncio
 from random import choice
@@ -51,6 +47,11 @@ if installation_required:
     TBUtility.install_package(
         'python-snap7', required_version, force_install=force_install
     )
+
+from thingsboard_gateway.connectors.s7.entities.device import Device  # noqa: E402
+from thingsboard_gateway.connectors.s7.entities.device_configs import (  # noqa: E402
+    DeviceConfigValidationError,
+)
 
 
 class S7Connector(Thread, Connector):
@@ -247,10 +248,142 @@ class S7Connector(Thread, Connector):
             task.cancel()
 
     def on_attributes_update(self, content):
-        pass
+        try:
+            self.__log.debug('Received attribute update request: %r', content)
+
+            device_name = content.get('device')
+            device = self._get_device_by_name(device_name)
+            if device is None:
+                self.__log.error('Device %s not found', content['device'])
+                return
+
+            if not device.config.attributes_updates:
+                self.__log.error("No attribute mapping found for device %s", device.config.device_name)
+                return
+
+            filtered_attribute_updates_section_from_config = [
+                update_config
+                for update_config in device.config.attributes_updates
+                if update_config["key"] in content.get("data", {})
+            ]
+            self._process_attribute_update(filtered_attribute_updates_section_from_config, content, device)
+        except Exception as e:
+            self.__log.exception('Error processing attribute update %r: %s', content, e)
+
+    def _process_attribute_update(self, attribute_update_config_list, content, device):
+        for attribute_update_config in attribute_update_config_list:
+            try:
+                data_section = content.get('data', {})
+                value = data_section.get(attribute_update_config['key'])
+                if value is None:
+                    self.__log.error("Value for attribute '%s' not found in update request for device '%s'",
+                                     attribute_update_config['key'], device.config.device_name)
+                    continue
+
+                converted_value = device.downlink_converter.convert(attribute_update_config, value)
+                result = device.write(attribute_update_config, converted_value)
+                if result != 0:
+                    self.__log.error("Failed to write value '%s' to device '%s' for attribute '%s'",
+                                     converted_value, device.config.device_name, attribute_update_config['key'])
+                else:
+                    self.__log.debug("Successfully processed attribute update for key %s",
+                                     attribute_update_config['key'])
+            except Exception as e:
+                self.__log.exception(
+                    "Failed to process attribute update for device '%s' attribute '%s': %s",
+                    device.config.device_name, attribute_update_config['key'], e)
+                continue
 
     def server_side_rpc_handler(self, content):
-        pass
+        self.__log.debug('Received RPC request: %r', content)
+
+        try:
+            device_name = content.get('device')
+            device = self._get_device_by_name(device_name)
+            if device is None:
+                error_msg = f"Device with name {device_name} not found for RPC request: {content}"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+
+            rpc_method_name = content.get('data', {}).get('method')
+            if rpc_method_name is None:
+                error_msg = f"Method name not found in RPC request: {content}"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+
+            filtered_rpc_section_from_config = [rpc_config for rpc_config in device.config.server_side_rpc if
+                                                rpc_config['method'] == rpc_method_name]
+            if not filtered_rpc_section_from_config:
+                error_msg = f"Neither of configured device rpc methods match with {rpc_method_name}"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+
+            for rpc_config in filtered_rpc_section_from_config:
+                self._process_rpc(rpc_method_name, rpc_config, content, device)
+                return
+        except Exception as e:
+            error_msg = f"Error processing RPC request {content}: {e}"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+
+    def _get_device_by_name(self, device_name):
+        for device in self._devices:
+            if device.config.device_name == device_name:
+                return device
+        return None
+
+    def _process_rpc(self, rpc_method_name, rpc_config, content, device):
+        if rpc_config.get('requestType') == 'write':
+            self._process_write_rpc(rpc_method_name, rpc_config, content, device)
+        elif rpc_config.get('requestType') == 'read':
+            self._process_read_rpc(rpc_config, content, device)
+        else:
+            error_msg = f"Unsupported requestType {rpc_config.get('requestType')} for RPC method {rpc_method_name}"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+
+    def _process_write_rpc(self, rpc_method_name, rpc_config, content, device):
+        value = content.get('data', {}).get('params')
+        if value is None:
+            error_msg = f"No 'params' found in RPC request for method {rpc_method_name}"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+            return
+
+        converted_value = device.downlink_converter.convert(
+                    rpc_config, value)
+        result = device.write(rpc_config, converted_value)
+        if result != 0:
+            error_msg = f"Failed to write value {converted_value} to device {device.config.device_name} for RPC method {rpc_method_name}"  # noqa: E501
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+
+        self.__gateway.send_rpc_reply(
+            device=device.config.device_name,
+            req_id=content.get('data', {}).get('id'),
+            content={"result": {
+                "success": f"Successfully wrote value {converted_value} to device {device.config.device_name} for RPC method {rpc_method_name}"}}  # noqa: E501
+        )
+
+    def _process_read_rpc(self, rpc_config, content, device):
+        data = device.read(rpc_config)
+        converted_value = device.uplink_converter.convert_data(rpc_config, data)
+        self.__gateway.send_rpc_reply(
+            device=device.config.device_name,
+            req_id=content.get('data', {}).get('id'),
+            content={"result": converted_value}
+        )
+
+    def _send_error_rpc_reply(self, device_name, request_id, error_message):
+        self.__log.error(error_message)
+        self.__gateway.send_rpc_reply(
+            device=device_name,
+            req_id=request_id,
+            content={"result": {"error": error_message}}
+        )
 
     def get_id(self):
         return self.__id

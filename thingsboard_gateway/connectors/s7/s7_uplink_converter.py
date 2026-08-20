@@ -55,7 +55,7 @@ class S7UplinkConverter(S7Converter):
                                                                        device_report_strategy,
                                                                        config,
                                                                        self.__log)
-                converted_value = self._convert_data(config, value)
+                converted_value = self.convert_data(config, value)
                 payload = {datapoint_key: converted_value}
                 if config['type_'] == 'timeseries':
                     payload['ts'] = received_data_ts
@@ -85,7 +85,7 @@ class S7UplinkConverter(S7Converter):
             self.__log.trace(
                 "Report strategy config is not specified for device %s: %s", device_name, e)
 
-    def _convert_data(self, config, value):
+    def convert_data(self, config, value):
         if config['type'] == 'vm' or config['type'] == 'tag':
             return value
         elif config['type'] == 'data':

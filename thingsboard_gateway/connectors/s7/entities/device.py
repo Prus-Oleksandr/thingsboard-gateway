@@ -26,6 +26,7 @@ from thingsboard_gateway.connectors.s7.entities.device_types import (
     DeviceType,
     DeviceTypes,
 )
+from thingsboard_gateway.connectors.s7.s7_downlink_converter import S7DownlinkConverter
 from thingsboard_gateway.connectors.s7.s7_uplink_converter import S7UplinkConverter
 
 from snap7 import Client as PlcClient, Logo as LogoClient
@@ -38,6 +39,8 @@ class Device:
         self._reading_request_queue = reading_request_queue
         self._log = logger
         self.uplink_converter = self._load_uplink_converter(converter_logger)
+        self.downlink_converter = self._load_downlink_converter(
+            converter_logger)
 
     def _load_uplink_converter(self, converter_logger):
         try:
@@ -47,6 +50,15 @@ class Device:
         except Exception as e:
             self._log.exception(
                 'Failed to load uplink converter for % device: %s', self.config.device_name, e)
+
+    def _load_downlink_converter(self, converter_logger):
+        try:
+            # TODO: Add support for custom downlink converter in the future
+            converter = S7DownlinkConverter(converter_logger)
+            return converter
+        except Exception as e:
+            self._log.exception(
+                'Failed to load downlink converter for % device: %s', self.config.device_name, e)
 
     @staticmethod
     def create_device_from_config(logger, converter_logger, config: dict, reading_request_queue) -> 'Device':
@@ -147,25 +159,28 @@ class PLC(Device):
             self._log.error(
                 f"Failed to disconnect from Logo device '{self.config.device_name}' at {self.config.address}:{self.config.port}: {e}")  # noqa: E501
 
-    async def read_configured_data(self):
-        results = []
-
+    def write(self, config, data):
         if not self._client.get_connected():
             raise ConnectionError(
-                f"PLC device '{self.config.device_name}' is not connected. Cannot read data.")
+                f"PLC device '{self.config.device_name}' is not connected. Cannot write data.")
+
+        request_type = config.get('type')
+        if request_type == 'data':
+            return self._client.db_write(config['dbNumber'], config['start'], data)
+        elif request_type == 'tag':
+            return self._client.write_tag(config['tag'], data)
+        else:
+            raise ValueError(
+                f"Unsupported request type '{request_type}' for writing data to PLC device '{self.config.device_name}'")
+
+    async def read_configured_data(self):
+        results = []
 
         for datapoint in self.config.datapoints:
             value = None
 
             try:
-                if datapoint['type'] == 'data':
-                    value = self._client.db_read(
-                        datapoint['dbNumber'], datapoint['start'], datapoint['size'])
-                elif datapoint['type'] == 'tag':
-                    value = self._client.read_tag(datapoint['tag'])
-                else:
-                    raise ValueError(
-                        f"Unsupported datapoint type '{datapoint['type']}' for PLC device '{self.config.device_name}'")
+                value = self.read(datapoint)
             except Exception as e:
                 self._log.error(
                     f"Error reading datapoint '{datapoint['key']}' from PLC device '{self.config.device_name}': {e}")  # noqa: E501
@@ -173,6 +188,20 @@ class PLC(Device):
                 results.append(value)
 
         return results
+
+    def read(self, config):
+        if not self._client.get_connected():
+            raise ConnectionError(
+                f"PLC device '{self.config.device_name}' is not connected. Cannot read data.")
+
+        request_type = config.get('type')
+        if request_type == 'data':
+            return self._client.db_read(config['dbNumber'], config['start'], config['size'])
+        elif request_type == 'tag':
+            return self._client.read_tag(config['tag'])
+        else:
+            raise ValueError(
+                f"Unsupported request type '{request_type}' for reading data from PLC device '{self.config.device_name}'")  # noqa: E501
 
 
 class Logo(Device):
@@ -203,13 +232,9 @@ class Logo(Device):
     async def read_configured_data(self):
         results = []
 
-        if not self._client.connected:
-            raise ConnectionError(
-                f"Logo device '{self.config.device_name}' is not connected. Cannot read data.")
-
         for datapoint in self.config.datapoints:
             try:
-                value = self._client.read(datapoint['vmAddress'])
+                value = self.read(datapoint)
                 results.append(value)
             except Exception as e:
                 self._log.error(
@@ -217,3 +242,10 @@ class Logo(Device):
                 results.append(None)
 
         return results
+
+    def read(self, config):
+        if not self._client.connected:
+            raise ConnectionError(
+                f"Logo device '{self.config.device_name}' is not connected. Cannot read data.")
+
+        return self._client.read(config['vmAddress'])
