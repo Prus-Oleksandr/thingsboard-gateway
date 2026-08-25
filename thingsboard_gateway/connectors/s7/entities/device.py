@@ -257,4 +257,9 @@ class Logo(Device):
 
         return self._client.read(config['vmAddress'])
 
-    def write(self,)
+    def write(self, config, data):
+        if not self._client.connected:
+            raise ConnectionError(
+                f"Logo device '{self.config.device_name}' is not connected. Cannot write data.")
+
+        return self._client.write(config['vmAddress'], data)
