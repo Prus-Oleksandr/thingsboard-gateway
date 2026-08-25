@@ -14,6 +14,9 @@
 
 import struct
 import snap7.util
+from snap7.tags import Tag
+
+from datetime import datetime, date, timedelta
 
 from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
@@ -27,11 +30,14 @@ class S7DownlinkConverter:
         if request_type == 'data':
             return self._convert_data_request(config, data)
         elif request_type == 'tag':
-            # TODO: Implement tag request conversion
-            pass
+            return self._convert_tag_request(config, data)
         elif request_type == 'vm':
-            # TODO: Implement VM request conversion
-            pass
+            try:
+                return int(data)
+            except (ValueError, TypeError) as e:
+                self._log.error(
+            f"Failed to convert value '{data}' to int for vm downlink conversion: {e}")
+                return None
         else:
             self._log.error(
                 f"Unsupported request type '{request_type}' for downlink conversion.")
@@ -125,3 +131,78 @@ class S7DownlinkConverter:
             raise ValueError(f"Unsupported dataType: '{data_type}'")
 
         return buf
+
+    def _convert_tag_request(self, config, data):
+        tag_str = config.get('tag')
+
+        try:
+            tag = Tag.from_string(tag_str)
+        except Exception as e:
+            self._log.error(f"Failed to parse tag '{tag_str}': {e}")
+            return None
+
+        if tag.is_symbolic:
+            self._log.error(
+                f"Failed to process tag '{tag_str}': Symbolic (LID-based) tag access is not supported")
+            return None
+
+        datatype = tag.datatype.upper()
+
+        try:
+            if tag.count > 1:
+                if not isinstance(data, (list, tuple)):
+                    self._log.error(
+                        f"Failed to convert value for tag '{tag_str}': "
+                        f"Expected list/tuple for array (count={tag.count}), got {data!r}")
+                    return None
+                return [self._convert_scalar(datatype, v, tag_str) for v in data]
+
+            return self._convert_scalar(datatype, data, tag_str)
+        except (ValueError, TypeError) as e:
+            self._log.error(
+                f"Failed to convert value '{data}' to type '{datatype}' for tag '{tag_str}': {e}")
+            return None
+
+    def _convert_scalar(self, datatype, value, tag_str):
+
+        if datatype == 'BOOL':
+            return TBUtility.str_to_bool(value)
+
+        elif datatype in ('BYTE', 'SINT', 'USINT', 'INT', 'UINT', 'WORD',
+                          'DINT', 'UDINT', 'DWORD', 'LINT', 'ULINT', 'LWORD'):
+            return int(value)
+
+        elif datatype in ('REAL', 'LREAL'):
+            return float(value)
+
+        elif datatype in ('CHAR', 'WCHAR'):
+            return str(value)[:1]
+
+        elif datatype.startswith(('STRING', 'FSTRING', 'WSTRING')):
+            return str(value)
+
+        elif datatype == 'TIME':
+            # TODO: Add parser to convert milliseconds (int) or ISO durations into S7 duration format ('T#...').
+            return str(value)
+
+        elif datatype == 'TOD':
+            # TODO: Convert string 'HH:MM:SS' or milliseconds (int) into valid S7 TOD format.
+            t = datetime.strptime(str(value), "%H:%M:%S.%f" if '.' in str(value) else "%H:%M:%S").time()
+            return timedelta(hours=t.hour, minutes=t.minute, seconds=t.second, microseconds=t.microsecond)
+
+        elif datatype == 'DATE':
+            # TODO: Convert ISO date string ('YYYY-MM-DD') into S7 DATE format.
+            return date.fromisoformat(str(value))
+
+        elif datatype in ('DT', 'DTL'):
+            # TODO: Convert ISO datetime string into S7 BCD/DTL structure.
+            return datetime.fromisoformat(str(value))
+
+        elif datatype in ('LTIME', 'LTOD', 'LDT'):
+            # TODO: Implement 64-bit S7 time types (LTIME, LTOD, LDT) conversion.
+            return value
+
+        else:
+            self._log.warning(
+                f"Unsupported datatype '{datatype}' for tag '{tag_str}', passing value as-is")
+            return value
