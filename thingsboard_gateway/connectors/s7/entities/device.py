@@ -28,6 +28,12 @@ from thingsboard_gateway.connectors.s7.entities.device_types import (
 )
 from thingsboard_gateway.connectors.s7.s7_downlink_converter import S7DownlinkConverter
 from thingsboard_gateway.connectors.s7.s7_uplink_converter import S7UplinkConverter
+from thingsboard_gateway.tb_utility.tb_loader import TBModuleLoader
+from thingsboard_gateway.connectors.s7.constants import (
+    UPLINK_PREFIX,
+    DOWNLINK_PREFIX,
+    CONNECTOR_TYPE,
+)
 
 from snap7 import Client as PlcClient, Logo as LogoClient
 
@@ -38,27 +44,31 @@ class Device:
         self.stopped = True
         self._reading_request_queue = reading_request_queue
         self._log = logger
-        self.uplink_converter = self._load_uplink_converter(converter_logger)
-        self.downlink_converter = self._load_downlink_converter(
-            converter_logger)
+        self.uplink_converter = self._load_converter(UPLINK_PREFIX, converter_logger)
+        self.downlink_converter = self._load_converter(DOWNLINK_PREFIX, converter_logger)
 
-    def _load_uplink_converter(self, converter_logger):
+
+    def _load_converter(self, converter_type: str, converter_logger):
         try:
-            # TODO: Add support for custom uplink converter in the future
-            converter = S7UplinkConverter(converter_logger, self.config)
-            return converter
+            config_attr = converter_type + '_converter_config'
+            custom_converter = getattr(self.config, config_attr, None)
+
+            if isinstance(custom_converter, str):
+                converter_class = TBModuleLoader.import_module(CONNECTOR_TYPE, custom_converter)
+                if converter_type == DOWNLINK_PREFIX:
+                    return converter_class(converter_logger)
+                return converter_class(converter_logger, self.config)
+
+            if isinstance(custom_converter, (S7UplinkConverter, S7DownlinkConverter)):
+                return custom_converter
+
+            if converter_type == DOWNLINK_PREFIX:
+                return S7DownlinkConverter(converter_logger)
+            return S7UplinkConverter(converter_logger, self.config)
         except Exception as e:
             self._log.exception(
-                'Failed to load uplink converter for % device: %s', self.config.device_name, e)
-
-    def _load_downlink_converter(self, converter_logger):
-        try:
-            # TODO: Add support for custom downlink converter in the future
-            converter = S7DownlinkConverter(converter_logger)
-            return converter
-        except Exception as e:
-            self._log.exception(
-                'Failed to load downlink converter for % device: %s', self.config.device_name, e)
+                'Failed to load %s converter for %s device: %s',
+                converter_type, self.config.device_name, e)
 
     @staticmethod
     def create_device_from_config(logger, converter_logger, config: dict, reading_request_queue) -> 'Device':

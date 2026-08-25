@@ -40,6 +40,8 @@ class DeviceConfig(ABC):
         self.port = config['port']
         self.poll_period = config['pollPeriod'] / 1000
         self.report_strategy_config = config.get('reportStrategy', {})
+        self.uplink_converter_config = config.get('uplinkConverter')
+        self.downlink_converter_config = config.get('downlinkConverter')
         self._format_config(config)
         self.attributes = config['attributes']
         self.timeseries = config['timeseries']
