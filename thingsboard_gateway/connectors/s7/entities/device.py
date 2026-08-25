@@ -59,9 +59,6 @@ class Device:
                     return converter_class(converter_logger)
                 return converter_class(converter_logger, self.config)
 
-            if isinstance(custom_converter, (S7UplinkConverter, S7DownlinkConverter)):
-                return custom_converter
-
             if converter_type == DOWNLINK_PREFIX:
                 return S7DownlinkConverter(converter_logger)
             return S7UplinkConverter(converter_logger, self.config)
@@ -259,3 +256,5 @@ class Logo(Device):
                 f"Logo device '{self.config.device_name}' is not connected. Cannot read data.")
 
         return self._client.read(config['vmAddress'])
+
+    def write(self,)
