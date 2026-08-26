@@ -13,6 +13,7 @@
 #     limitations under the License.
 
 from time import monotonic, sleep
+import re
 import asyncio
 from random import choice
 from string import ascii_lowercase
@@ -313,6 +314,10 @@ class S7Connector(Thread, Connector):
                     device.config.device_name, content.get('data', {}).get('id'), error_msg)
                 return
 
+            if rpc_method_name in ('get', 'set'):
+                self._process_reserved_rpc(rpc_method_name, content, device)
+                return
+
             filtered_rpc_section_from_config = [rpc_config for rpc_config in device.config.server_side_rpc if
                                                 rpc_config['method'] == rpc_method_name]
             if not filtered_rpc_section_from_config:
@@ -344,6 +349,103 @@ class S7Connector(Thread, Connector):
             error_msg = f"Unsupported requestType {rpc_config.get('requestType')} for RPC method {rpc_method_name}"
             self._send_error_rpc_reply(
                 device.config.device_name, content.get('data', {}).get('id'), error_msg)
+
+    RESERVED_GET_RPC_SCHEMA = ("type=tag;tag=<S7 tag address>; OR "
+                              "type=data;dbNumber=<int>;start=<int>;dataType=<type>;size=<int>;[bit=<int>;] OR "
+                              "type=vm;vmAddress=<LOGO VM address>;")
+    RESERVED_SET_RPC_SCHEMA = ("type=tag;tag=<S7 tag address>;value=<value>; OR "
+                              "type=data;dbNumber=<int>;start=<int>;dataType=<type>;[size=<int>;][bit=<int>;]value=<value>; OR "
+                              "type=vm;vmAddress=<LOGO VM address>;value=<value>;")
+
+    _RESERVED_PARAMS_PATTERN = re.compile(r'^(\w+=[^;]+;)+$')
+
+    def _process_reserved_rpc(self, rpc_method_name, content, device):
+        params_section = content.get('data', {}).get('params')
+        if not params_section:
+            error_msg = f"No 'params' found in reserved RPC request '{rpc_method_name}'"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+            return
+
+        if not self._RESERVED_PARAMS_PATTERN.match(params_section):
+            expected_schema = self.RESERVED_SET_RPC_SCHEMA if rpc_method_name == 'set' else self.RESERVED_GET_RPC_SCHEMA
+            error_msg = f"The requested RPC params do not match with the schema: {expected_schema}"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+            return
+
+
+        params = {}
+        for param in params_section.rstrip(';').split(';'):
+            key, value = param.split('=', 1)
+            params[key] = value
+
+        address_type = params.get('type')
+        if address_type not in ('tag', 'data', 'vm'):
+            error_msg = f"Reserved RPC 'type' must be 'tag', 'data' or 'vm', but got '{address_type}'"
+            self._send_error_rpc_reply(
+                device.config.device_name, content.get('data', {}).get('id'), error_msg)
+            return
+
+        rpc_config = {'type': address_type}
+
+        if address_type == 'tag':
+            if 'tag' not in params:
+                error_msg = "Reserved RPC of type 'tag' requires 'tag' parameter"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+            rpc_config['tag'] = params['tag']
+
+        elif address_type == 'vm':
+            if 'vmAddress' not in params:
+                error_msg = "Reserved RPC of type 'vm' requires 'vmAddress' parameter"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+            rpc_config['vmAddress'] = params['vmAddress']
+            
+        else:  # 'data'
+            required = ('dbNumber', 'start', 'dataType')
+            missing = [key for key in required if key not in params]
+            if missing:
+                error_msg = f"Reserved RPC of type 'data' is missing required parameter(s): {', '.join(missing)}"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+
+            if rpc_method_name == 'get' and 'size' not in params:
+                error_msg = "Reserved RPC 'get' of type 'data' requires 'size' parameter"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+
+            try:
+                rpc_config['dbNumber'] = int(params['dbNumber'])
+                rpc_config['start'] = int(params['start'])
+                if 'size' in params:
+                    rpc_config['size'] = int(params['size'])
+                if 'bit' in params:
+                    rpc_config['bit'] = int(params['bit'])
+            except ValueError as e:
+                error_msg = f"Invalid numeric parameter in reserved RPC request: {e}"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+            rpc_config['dataType'] = params['dataType']
+
+        if rpc_method_name == 'set':
+            if 'value' not in params:
+                error_msg = "Reserved RPC 'set' requires 'value' parameter"
+                self._send_error_rpc_reply(
+                    device.config.device_name, content.get('data', {}).get('id'), error_msg)
+                return
+            rpc_config['requestType'] = 'write'
+            content = {**content, 'data': {**content['data'], 'params': params['value']}}
+        else:
+            rpc_config['requestType'] = 'read'
+
+        self._process_rpc(rpc_method_name, rpc_config, content, device)
 
     def _process_write_rpc(self, rpc_method_name, rpc_config, content, device):
         value = content.get('data', {}).get('params')
