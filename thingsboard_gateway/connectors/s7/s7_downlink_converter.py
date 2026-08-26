@@ -32,12 +32,7 @@ class S7DownlinkConverter:
         elif request_type == 'tag':
             return self._convert_tag_request(config, data)
         elif request_type == 'vm':
-            try:
-                return int(data)
-            except (ValueError, TypeError) as e:
-                self._log.error(
-            f"Failed to convert value '{data}' to int for vm downlink conversion: {e}")
-                return None
+            return self._convert_vm_request(data)
         else:
             self._log.error(
                 f"Unsupported request type '{request_type}' for downlink conversion.")
@@ -161,6 +156,15 @@ class S7DownlinkConverter:
         except (ValueError, TypeError) as e:
             self._log.error(
                 f"Failed to convert value '{data}' to type '{datatype}' for tag '{tag_str}': {e}")
+            return None
+
+    def _convert_vm_request(self, data):
+        try:
+            return int(data)
+        except (ValueError, TypeError) as e:
+            self._log.error(
+                f"Failed to convert value '{data}' to int for vm downlink conversion: {e}"
+            )
             return None
 
     def _convert_scalar(self, datatype, value, tag_str):
