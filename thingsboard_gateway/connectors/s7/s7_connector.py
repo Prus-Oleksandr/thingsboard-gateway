@@ -83,6 +83,15 @@ class S7Connector(Thread, Connector):
         ('vm', 'get'): re.compile(RESERVED_GET_VM_RPC_PATTERN),
         ('vm', 'set'): re.compile(RESERVED_SET_VM_RPC_PATTERN),
     }
+    
+    _RESERVED_RPC_SCHEMAS_BY_TYPE_AND_METHOD = {
+            ('tag', 'get'): RESERVED_GET_TAG_RPC_SCHEMA,
+            ('tag', 'set'): RESERVED_SET_TAG_RPC_SCHEMA,
+            ('data', 'get'): RESERVED_GET_DATA_RPC_SCHEMA,
+            ('data', 'set'): RESERVED_SET_DATA_RPC_SCHEMA,
+            ('vm', 'get'): RESERVED_GET_VM_RPC_SCHEMA,
+            ('vm', 'set'): RESERVED_SET_VM_RPC_SCHEMA,
+        }
 
     def __init__(self, gateway, config, connector_type) -> None:
         self.statistics = {
@@ -407,15 +416,6 @@ class S7Connector(Thread, Connector):
             content = {**content, 'data': {**content['data'], 'params': match.group('value')}}
 
         self._process_rpc(rpc_method_name, rpc_config, content, device)
-
-    _RESERVED_RPC_SCHEMAS_BY_TYPE_AND_METHOD = {
-        ('tag', 'get'): RESERVED_GET_TAG_RPC_SCHEMA,
-        ('tag', 'set'): RESERVED_SET_TAG_RPC_SCHEMA,
-        ('data', 'get'): RESERVED_GET_DATA_RPC_SCHEMA,
-        ('data', 'set'): RESERVED_SET_DATA_RPC_SCHEMA,
-        ('vm', 'get'): RESERVED_GET_VM_RPC_SCHEMA,
-        ('vm', 'set'): RESERVED_SET_VM_RPC_SCHEMA,
-    }
 
     def _reply_reserved_rpc_schema_mismatch(self, rpc_method_name, request_id, device, address_type=None):
         if address_type is None:
