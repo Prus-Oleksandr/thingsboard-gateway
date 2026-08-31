@@ -161,7 +161,12 @@ class S7DownlinkConverter:
     def _convert_vm_request(self, data):
         try:
             return int(data)
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            return int(TBUtility.str_to_bool(data))
+        except ValueError as e:
             self._log.error(
                 f"Failed to convert value '{data}' to int for vm downlink conversion: {e}"
             )
