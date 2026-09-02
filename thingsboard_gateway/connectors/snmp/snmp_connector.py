@@ -332,11 +332,12 @@ class SNMPConnector(Connector, Thread):
 
     def __process_rpc_request(self, device, rpc_config, content):
         common_parameters = self.__get_common_parameters(device)
+        converted_value = device["downlink_converter"].convert(rpc_config, {"params": content["data"]["params"]})
         result = asyncio.run_coroutine_threadsafe(self.__process_methods(rpc_config["method"],
                                                                          common_parameters,
                                                                          {**rpc_config,
-                                                                          "value": content["data"]["params"]}),
-                                                  loop=self.__loop).result(timeout=int(rpc_config.get("timeout", 5)))
+                                                                          "value": converted_value}),
+                                                  loop=self.__loop).result(timeout=int(rpc_config.get("timeout", 30)))
         result = result.decode("utf-8") if isinstance(result, bytes) else str(result)
         self._log.trace('RPC result: %s', result)
         self.__gateway.send_rpc_reply(device=content["device"], req_id=content["data"]["id"],
