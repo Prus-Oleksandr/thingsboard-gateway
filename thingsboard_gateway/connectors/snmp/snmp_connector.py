@@ -263,20 +263,52 @@ class SNMPConnector(Connector, Thread):
                 return
 
             for attribute_request_config in device["attributeUpdateRequests"]:
-                for attribute, value in content["data"]:
+                for attribute, value in content["data"].items():
                     if search(attribute, attribute_request_config["attributeFilter"]):
                         common_parameters = self.__get_common_parameters(device)
-                        result = self.__process_methods(attribute_request_config["method"], common_parameters,
-                                                        {**attribute_request_config, "value": value})
+                        if "mappings" in attribute_request_config:
+                            resolved_config = {**attribute_request_config,
+                                               "mappings": self.__resolve_mappings_placeholders(
+                                                   attribute_request_config["mappings"], value)}
+                        else:
+                            resolved_config = attribute_request_config
+                        converted_value = device["downlink_converter"].convert(resolved_config,
+                                                                              {"params": value})
+                        if "mappings" in attribute_request_config:
+                            downlink_config = {**attribute_request_config, "mappings": converted_value}
+                        else:
+                            downlink_config = {**attribute_request_config, "value": converted_value}
+                        result = asyncio.run_coroutine_threadsafe(
+                            self.__process_methods(attribute_request_config["method"], common_parameters,
+                                                   downlink_config),
+                            loop=self.__loop).result(timeout=int(attribute_request_config.get("timeout", 30)))
                         self._log.debug(
                             "Received attribute update request for device \"%s\" "
                             "with attribute \"%s\" and value \"%s\"",
                             content["device"],
-                            attribute)
+                            attribute,
+                            value)
                         self._log.debug(result)
                         self._log.debug(content)
         except Exception as e:
             self._log.exception(e)
+
+    @staticmethod
+    def __resolve_mappings_placeholders(mappings, value):
+        resolved_mappings = {}
+
+        for oid, mapping_value in mappings.items():
+            if isinstance(mapping_value, dict):
+                resolved_mapping_value = mapping_value.get("value")
+                if isinstance(resolved_mapping_value, str):
+                    resolved_mapping_value = resolved_mapping_value.replace("${attribute}", str(value))
+                resolved_mappings[oid] = {**mapping_value, "value": resolved_mapping_value}
+            elif isinstance(mapping_value, str):
+                resolved_mappings[oid] = mapping_value.replace("${attribute}", str(value))
+            else:
+                resolved_mappings[oid] = mapping_value
+
+        return resolved_mappings
 
     def __find_device_by_name(self, device_name):
         device_filter = tuple(filter(lambda device: device["deviceName"] == device_name, self.__devices))
@@ -333,10 +365,13 @@ class SNMPConnector(Connector, Thread):
     def __process_rpc_request(self, device, rpc_config, content):
         common_parameters = self.__get_common_parameters(device)
         converted_value = device["downlink_converter"].convert(rpc_config, {"params": content["data"]["params"]})
+        if "mappings" in rpc_config:
+            downlink_config = {**rpc_config, "mappings": converted_value}
+        else:
+            downlink_config = {**rpc_config, "value": converted_value}
         result = asyncio.run_coroutine_threadsafe(self.__process_methods(rpc_config["method"],
                                                                          common_parameters,
-                                                                         {**rpc_config,
-                                                                          "value": converted_value}),
+                                                                         downlink_config),
                                                   loop=self.__loop).result(timeout=int(rpc_config.get("timeout", 30)))
         result = result.decode("utf-8") if isinstance(result, bytes) else str(result)
         self._log.trace('RPC result: %s', result)

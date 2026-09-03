@@ -50,11 +50,34 @@ class SNMPDownlinkConverter(Converter):
     @CollectStatistics(start_stat_type='allReceivedBytesFromTB',
                        end_stat_type='allBytesSentToDevices')
     def convert(self, config, data):
+        mappings = config.get("mappings")
+        if mappings is not None:
+            return self.__convert_mappings(config, mappings)
+
         value = data.get("params")
         if value is None:
             return Integer(0)
 
-        snmp_type = config.get("type", "OCTETSTRING").upper()
+        return self.__convert_value(value, config.get("type", "OCTETSTRING"))
+
+    def __convert_mappings(self, config, mappings):
+        default_type = config.get("type", "OCTETSTRING")
+        converted_mappings = {}
+
+        for oid, mapping_value in mappings.items():
+            if isinstance(mapping_value, dict):
+                value = mapping_value.get("value")
+                snmp_type = mapping_value.get("type", default_type)
+            else:
+                value = mapping_value
+                snmp_type = default_type
+
+            converted_mappings[oid] = self.__convert_value(value, snmp_type)
+
+        return converted_mappings
+
+    def __convert_value(self, value, snmp_type):
+        snmp_type = snmp_type.upper()
         handler = self._TYPE_HANDLERS.get(snmp_type)
 
         if handler:
