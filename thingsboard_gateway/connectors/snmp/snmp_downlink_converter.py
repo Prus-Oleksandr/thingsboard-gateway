@@ -64,6 +64,15 @@ class SNMPDownlinkConverter(Converter):
         default_type = config.get("type", "OCTETSTRING")
         converted_mappings = {}
 
+        if isinstance(mappings, list):
+            for mapping in mappings:
+                oid = mapping.get("oid")
+                value = mapping.get("value")
+                snmp_type = mapping.get("type", default_type)
+                converted_mappings[oid] = self.__convert_value(value, snmp_type)
+
+            return converted_mappings
+
         for oid, mapping_value in mappings.items():
             if isinstance(mapping_value, dict):
                 value = mapping_value.get("value")
