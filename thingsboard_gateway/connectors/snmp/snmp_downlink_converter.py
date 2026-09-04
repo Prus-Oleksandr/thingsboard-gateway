@@ -18,6 +18,7 @@ from puresnmp.types import Integer, OctetString, IpAddress, Counter, Gauge, Coun
 
 from thingsboard_gateway.connectors.converter import Converter
 from thingsboard_gateway.gateway.statistics.decorators import CollectStatistics
+from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
 
 class SNMPDownlinkConverter(Converter):
@@ -52,7 +53,7 @@ class SNMPDownlinkConverter(Converter):
     def convert(self, config, data):
         mappings = config.get("mappings")
         if mappings is not None:
-            return self.__convert_mappings(config, mappings)
+            return self.__convert_mappings(config, mappings, data)
 
         value = data.get("params")
         if value is None:
@@ -60,14 +61,14 @@ class SNMPDownlinkConverter(Converter):
 
         return self.__convert_value(value, config.get("type", "OCTETSTRING"))
 
-    def __convert_mappings(self, config, mappings):
+    def __convert_mappings(self, config, mappings, data):
         default_type = config.get("type", "OCTETSTRING")
         converted_mappings = {}
 
         if isinstance(mappings, list):
             for mapping in mappings:
                 oid = mapping.get("oid")
-                value = mapping.get("value")
+                value = self.__resolve_mapping_value(mapping.get("value"), data)
                 snmp_type = mapping.get("type", default_type)
                 converted_mappings[oid] = self.__convert_value(value, snmp_type)
 
@@ -75,15 +76,29 @@ class SNMPDownlinkConverter(Converter):
 
         for oid, mapping_value in mappings.items():
             if isinstance(mapping_value, dict):
-                value = mapping_value.get("value")
+                value = self.__resolve_mapping_value(mapping_value.get("value"), data)
                 snmp_type = mapping_value.get("type", default_type)
             else:
-                value = mapping_value
+                value = self.__resolve_mapping_value(mapping_value, data)
                 snmp_type = default_type
 
             converted_mappings[oid] = self.__convert_value(value, snmp_type)
 
         return converted_mappings
+
+    @staticmethod
+    def __resolve_mapping_value(value_expression, data):
+        if not isinstance(value_expression, str):
+            return value_expression
+
+        tags = TBUtility.get_values(value_expression, data, 'params', get_tag=True)
+        values = TBUtility.get_values(value_expression, data, 'params', expression_instead_none=True)
+
+        resolved_value = value_expression
+        for (tag, value) in zip(tags, values):
+            resolved_value = resolved_value.replace('${' + tag + '}', str(value))
+
+        return resolved_value
 
     def __convert_value(self, value, snmp_type):
         snmp_type = snmp_type.upper()
